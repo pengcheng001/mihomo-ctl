@@ -28,8 +28,8 @@
 ## 快速上手 (4 步)
 
 ```bash
-# 1. 装 wheel (pip 会自动装 click/httpx/pyyaml/rich 等依赖)
-pip install --user mihomo_ctl-0.1.0-py3-none-linux_x86_64.whl
+# 1. 装 wheel (从 GitHub Releases 直接拉,pip 会自动装 click/httpx/pyyaml/rich 等依赖)
+pip install --user https://github.com/pengcheng001/mihomo-ctl/releases/download/v0.1.0/mihomo_ctl-0.1.0-py3-none-linux_x86_64.whl
 
 # 2. 一键部署 (会用 sudo 写 setcap/NM/polkit,中间最多输 1 次密码)
 mhctl install
@@ -43,6 +43,11 @@ mhctl on            # 或者 mhctl tun on (TUN 模式)
 ```
 
 完事后 `mhctl <TAB>` 看所有子命令；`mhctl status` 看当前状态。
+
+> 想装最新版而不是固定 v0.1.0:
+> ```bash
+> pip install --user $(curl -s https://api.github.com/repos/pengcheng001/mihomo-ctl/releases/latest | grep 'browser_download_url.*\.whl' | cut -d'"' -f4)
+> ```
 
 ## 主要命令
 
@@ -144,8 +149,22 @@ mhctl limit status        # 看实时 Sent 字节数
 
 ### 从 wheel 装（推荐）
 
+**固定版本 v0.1.0**:
+
 ```bash
-pip install --user mihomo_ctl-0.1.0-py3-none-linux_x86_64.whl
+pip install --user https://github.com/pengcheng001/mihomo-ctl/releases/download/v0.1.0/mihomo_ctl-0.1.0-py3-none-linux_x86_64.whl
+```
+
+**始终装最新版**:
+
+```bash
+pip install --user $(curl -s https://api.github.com/repos/pengcheng001/mihomo-ctl/releases/latest | grep 'browser_download_url.*\.whl' | cut -d'"' -f4)
+```
+
+**已下载到本地的 wheel**:
+
+```bash
+pip install --user ./mihomo_ctl-0.1.0-py3-none-linux_x86_64.whl
 ```
 
 wheel **只支持 Linux x86_64**，因为内置的 mihomo 二进制是该平台的 ELF。其它平台 pip 会直接拒绝。
