@@ -12,13 +12,8 @@ build/
 dist/
 wheels/
 
-# Bundled big assets — populated by `scripts/fetch-assets.sh` before building.
-# DO NOT commit (binary is ~36MB, geoip ~28MB, dashboard ~2MB).
-assets/bin/
-assets/config/geoip.dat
-assets/config/geoip.metadb
-assets/config/geosite.dat
-assets/config/ui/
+# assets/ 下的二进制 + geo + UI 直接 commit 进 git,让 clone 后能直接 build。
+# 想升级版本跑 `scripts/fetch-assets.sh` 重拉一份再 commit。
 
 # Virtual environments
 .venv/

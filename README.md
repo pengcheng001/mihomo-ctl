@@ -156,16 +156,20 @@ wheel **只支持 Linux x86_64**，因为内置的 mihomo 二进制是该平台�
 git clone https://github.com/pengcheng001/mihomo-ctl.git
 cd mihomo-ctl
 
-# 1. 拉 bundled 资源 (mihomo 二进制 + geo 数据 + 控制面板)
-#    放到 assets/ 下 (gitignored,默认 v1.18.0,改 MIHOMO_VERSION 覆盖)
-bash scripts/fetch-assets.sh
-
-# 2. 构建 wheel
+# 构建 wheel (assets/ 里的 mihomo 二进制 + geo 数据 + UI 已随仓库提供)
 pip install hatchling build
 python -m build --wheel --no-isolation
 
-# 3. wheel 在 dist/ 下,直接装
+# wheel 在 dist/ 下,直接装
 pip install --user dist/mihomo_ctl-0.1.0-py3-none-linux_x86_64.whl
+```
+
+想升级内置的 mihomo 内核版本:
+
+```bash
+MIHOMO_VERSION=v1.18.10 bash scripts/fetch-assets.sh   # 重拉 assets/
+git diff --stat                                         # 看新版本带来的改动
+python -m build --wheel --no-isolation                  # 重新打 wheel
 ```
 
 ### 开发模式（editable install）
