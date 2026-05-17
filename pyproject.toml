@@ -1,0 +1,74 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mihomo-ctl"
+version = "0.1.0"
+description = "Self-contained command-line wrapper for mihomo (Clash.Meta): bundles the binary + geo data, no extra downloads."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "pch" }]
+keywords = ["mihomo", "clash", "proxy", "cli"]
+classifiers = [
+    "Environment :: Console",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+]
+
+dependencies = [
+    "click>=8.1",
+    "httpx>=0.27",
+    "pyyaml>=6.0",
+    "rich>=13.0",
+    "platformdirs>=4.0",
+    "tomli>=2.0; python_version<'3.11'",
+    "tomli-w>=1.0",
+]
+
+[project.scripts]
+mhctl = "mihomo_ctl.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/MetaCubeX/mihomo"
+
+# ============================================================
+# 打包白名单
+#   - wheel 里只含 src/mihomo_ctl/ 下的 .py 文件,以及下面 force-include 的资源
+#   - 显式 *不* 包含: config.yaml(个人订阅), cache.db(运行时), *.bak
+# ============================================================
+[tool.hatch.build.targets.wheel]
+packages = ["src/mihomo_ctl"]
+
+# 给 wheel 标上 linux_x86_64 平台 tag (因为内置的 mihomo 是该平台的 ELF)
+# 在错误平台 pip install 会直接报 "not supported on this platform"
+[tool.hatch.build.targets.wheel.hooks.custom]
+path = "build_hook.py"
+
+[tool.hatch.build.targets.wheel.force-include]
+# 大资源(二进制 + geo 数据 + UI)由 scripts/fetch-assets.sh 拉到 assets/
+# .gitignore 排除了 assets/ 下的大文件
+# tun-overlay.yaml / config.yaml.example 是小模板,直接放 src/mihomo_ctl/_assets/config/ 由源码自带
+"assets/bin/mihomo" = "mihomo_ctl/_assets/bin/mihomo"
+"assets/config/geoip.dat" = "mihomo_ctl/_assets/config/geoip.dat"
+"assets/config/geoip.metadb" = "mihomo_ctl/_assets/config/geoip.metadb"
+"assets/config/geosite.dat" = "mihomo_ctl/_assets/config/geosite.dat"
+"assets/config/ui" = "mihomo_ctl/_assets/config/ui"
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src/mihomo_ctl",
+    "/pyproject.toml",
+    "/README.md",
+]
+exclude = [
+    "**/config.yaml",
+    "**/config.yaml.bak",
+    "**/cache.db",
+    "**/*.log",
+    "**/__pycache__",
+    "**/*.pyc",
+    "/dist",
+    "/build",
+]

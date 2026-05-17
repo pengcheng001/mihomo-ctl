@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+*.egg
+
+# Build artifacts
+build/
+dist/
+wheels/
+
+# Bundled big assets — populated by `scripts/fetch-assets.sh` before building.
+# DO NOT commit (binary is ~36MB, geoip ~28MB, dashboard ~2MB).
+assets/bin/
+assets/config/geoip.dat
+assets/config/geoip.metadb
+assets/config/geosite.dat
+assets/config/ui/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Local-only Claude Code settings (per-machine)
+.claude/
+
+# Runtime state (never check in)
+*.log
+cache.db
+config.yaml
+*.bak

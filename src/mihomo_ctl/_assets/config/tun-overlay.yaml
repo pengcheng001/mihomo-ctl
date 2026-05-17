@@ -1,0 +1,13 @@
+# TUN 模式 overlay：在启动时拼接到 config.yaml 前面
+# 这些 key 在 config.yaml 中不存在，因此不会冲突
+tun:
+  enable: true
+  stack: mixed                  # mixed | system | gvisor，mixed 兼容性最好
+  device: utun0
+  dns-hijack:
+    - any:53
+  auto-route: true              # 自动添加默认路由到 utun
+  auto-redirect: false
+  auto-detect-interface: true   # 自动识别物理网卡作为出口
+  mtu: 9000
+  strict-route: false           # true 会更彻底接管，但可能影响 LAN
