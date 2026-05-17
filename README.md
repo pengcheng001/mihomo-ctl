@@ -44,10 +44,7 @@ mhctl on            # 或者 mhctl tun on (TUN 模式)
 
 完事后 `mhctl <TAB>` 看所有子命令；`mhctl status` 看当前状态。
 
-> 想装最新版而不是固定 v0.1.0:
-> ```bash
-> pip install --user $(curl -s https://api.github.com/repos/pengcheng001/mihomo-ctl/releases/latest | grep 'browser_download_url.*\.whl' | cut -d'"' -f4)
-> ```
+> 新版本发布时，去 [Releases 页面](https://github.com/pengcheng001/mihomo-ctl/releases) 复制最新 wheel 的 URL 替换上面那条。
 
 ## 主要命令
 
@@ -153,12 +150,6 @@ mhctl limit status        # 看实时 Sent 字节数
 
 ```bash
 pip install --user https://github.com/pengcheng001/mihomo-ctl/releases/download/v0.1.0/mihomo_ctl-0.1.0-py3-none-linux_x86_64.whl
-```
-
-**始终装最新版**:
-
-```bash
-pip install --user $(curl -s https://api.github.com/repos/pengcheng001/mihomo-ctl/releases/latest | grep 'browser_download_url.*\.whl' | cut -d'"' -f4)
 ```
 
 **已下载到本地的 wheel**:
