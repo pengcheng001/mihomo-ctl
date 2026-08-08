@@ -63,6 +63,53 @@ mhctl sysproxy on/off/status  手动开关 GNOME 系统代理
 
 完整帮助：`mhctl --help`，子命令帮助：`mhctl <子命令> --help`。
 
+## Decodo Dedicated ISP 上游
+
+`mhctl decodo add` 追加的是 Decodo 的 HTTP/SOCKS5 上游节点，不是 VLESS、VMess、Trojan 或 Shadowsocks。`--server` 必须填写 Decodo 连接入口（默认 `isp.decodo.com`），不要填写代理后的出口 IP。密码会隐藏提示输入：
+
+```bash
+mhctl decodo add --server isp.decodo.com --port 10001 \
+  --protocol http --username '<DECODO_USERNAME>' --name Decodo-US-01
+mhctl decodo add --server isp.decodo.com --port 10002 \
+  --protocol http --username '<DECODO_USERNAME>' --name Decodo-US-02
+mhctl decodo add --server isp.decodo.com --port 10003 \
+  --protocol http --username '<DECODO_USERNAME>' --name Decodo-US-03
+```
+
+相同入口、协议和用户名会复用同一个账号，只追加端口节点。日常管理和生成配置：
+
+如果本机已经配置了 Mihomo，`decodo add` 会同时把新节点追加到当前 `config.yaml` 的 `Decodo ISP` 组和原有代理组列表末尾，并保留原来的规则分流。Mihomo 正在运行时会自动尝试热加载。
+
+```bash
+mhctl decodo list                         # 节点与健康状态（不显示密码）
+mhctl decodo export -o decodo.yaml        # 生成可导入 Mihomo/Clash Meta 的 YAML
+mhctl decodo apply --reload               # 合并节点并追加到所有原有代理组，保留现有分流规则
+mhctl decodo apply --global --reload      # 显式把最后一条 MATCH 规则切到 Decodo
+mhctl decodo set-password decodo-1        # 更新密码，已有订阅 URL 不变
+mhctl decodo check                        # 逐节点查询出口 IP/位置/ISP/ASN
+```
+
+默认导出的 YAML 会带 `mode: rule` 和末尾 `MATCH,Decodo ISP`，因此直接导入后未命中特殊规则的流量会走当前选中的 Decodo 节点；需要作为纯节点片段时使用 `mhctl decodo export --no-rules`。
+
+### Token 订阅 URL
+
+配置公网前缀并生成一次性展示的订阅 URL：
+
+```bash
+mhctl decodo config --public-base-url https://example.com
+mhctl decodo token create --label decodo
+mhctl decodo serve                      # 默认监听 127.0.0.1:8787
+```
+
+将 `https://example.com/sub/<token>` 反向代理到 `http://127.0.0.1:8787/sub/<token>`，再把该地址添加到 Mihomo/Clash Meta。服务只接受合法 token，配置文件只保存 token 哈希；HTTP 访问日志关闭，避免 token 出现在普通日志中。生产环境应在 Nginx/Caddy 等 HTTPS 反代后运行，也可以用：
+
+```bash
+mhctl systemd decodo-install
+mhctl systemd decodo-enable
+```
+
+更新 Decodo 密码只需重新执行 `mhctl decodo set-password <账号或节点>`，订阅接口每次请求都会用最新密码动态生成 YAML。健康检查失败只记录该节点状态，不会阻断订阅响应。
+
 ## `mhctl install` 都做了什么
 
 | # | 做的事 | 路径 | 需要 sudo |
@@ -203,6 +250,8 @@ src/mihomo_ctl/
 ├── process.py         start/stop mihomo,等 TUN 设备建立,日志中提取 fatal
 ├── installer.py       mhctl install 的全部步骤 (setcap/NM/polkit/stub)
 ├── subscription.py    拉订阅 + 校验 Clash YAML + 注入本机 port/secret
+├── decodo.py          Decodo 账号/端口节点、YAML、token、健康检查
+├── subscription_server.py  token 保护的 /sub/<token> YAML 服务
 ├── limit.py           tc 限速 (HTB on lo,按源端口过滤)
 ├── sysproxy.py        GNOME 系统代理 (gsettings)
 ├── shell.py           init-shell 生成的 hook (Tab 补全 + on/off 改 env)

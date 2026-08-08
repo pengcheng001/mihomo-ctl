@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import platform
+import shlex
 import shutil
 import stat
 import subprocess
@@ -310,6 +311,51 @@ WantedBy=default.target
 
     subprocess.run(["systemctl", "--user", "daemon-reload"], check=False, capture_output=True)
     return unit_path
+
+
+DECODO_UNIT_NAME = "mihomo-ctl-decodo-subscription.service"
+
+
+def install_decodo_systemd_unit(cfg: cfg_mod.Config) -> Path:
+    """Generate a separate user unit for the token-protected Decodo endpoint."""
+    unit_dir = Path.home() / ".config" / "systemd" / "user"
+    unit_dir.mkdir(parents=True, exist_ok=True)
+    unit_path = unit_dir / DECODO_UNIT_NAME
+    python = shlex.quote(sys.executable)
+    host = shlex.quote(str(cfg.decodo_listen_host))
+
+    content = f"""[Unit]
+Description=mihomo-ctl Decodo subscription endpoint
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart={python} -m mihomo_ctl decodo serve --host {host} --port {int(cfg.decodo_listen_port)}
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target
+"""
+    unit_path.write_text(content, encoding="utf-8")
+    subprocess.run(["systemctl", "--user", "daemon-reload"], check=False, capture_output=True)
+    say(f"Decodo 订阅 systemd unit 已写入: {unit_path}")
+    return unit_path
+
+
+def uninstall_decodo_systemd_unit() -> None:
+    unit_path = Path.home() / ".config" / "systemd" / "user" / DECODO_UNIT_NAME
+    subprocess.run(["systemctl", "--user", "disable", "--now", DECODO_UNIT_NAME],
+                   check=False, capture_output=True)
+    if unit_path.exists():
+        unit_path.unlink()
+        say(f"已删除: {unit_path}")
+    else:
+        say(f"unit 文件本来就不存在: {unit_path}")
+    subprocess.run(["systemctl", "--user", "daemon-reload"], check=False, capture_output=True)
 
 
 def install(dest: Path, force: bool = False, skip_shell_hook: bool = False,

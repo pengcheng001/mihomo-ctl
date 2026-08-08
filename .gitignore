@@ -34,3 +34,8 @@ env/
 cache.db
 config.yaml
 *.bak
+
+# Decodo generated subscriptions/health snapshots may contain credentials.
+decodo*.yaml
+decodo*.yml
+decodo-health.json

@@ -4,16 +4,19 @@ import sys
 from pathlib import Path
 
 import click
+import yaml
 from rich.table import Table
 
 from . import __version__
 from . import api as api_mod
 from . import config as cfg_mod
+from . import decodo as decodo_mod
 from . import installer as installer_mod
 from . import limit as limit_mod
 from . import process as proc_mod
 from . import shell as shell_mod
 from . import subscription as sub_mod
+from . import subscription_server as subscription_server_mod
 from . import sysproxy as sysproxy_mod
 from .utils import console, mihomo_pid, say, step, warn
 
@@ -465,6 +468,36 @@ def systemd_uninstall() -> None:
     installer_mod.uninstall_systemd_unit()
 
 
+@systemd.command("decodo-install")
+def systemd_decodo_install() -> None:
+    """生成 Decodo /sub/<token> 订阅服务的 systemd user unit。"""
+    cfg = cfg_mod.load()
+    installer_mod.install_decodo_systemd_unit(cfg)
+    console.print("  [cyan]mhctl systemd decodo-enable[/]    启用并立即启动")
+
+
+@systemd.command("decodo-enable")
+def systemd_decodo_enable() -> None:
+    """启用并立即启动 Decodo 订阅服务。"""
+    from .utils import run
+    run(["systemctl", "--user", "enable", "--now", installer_mod.DECODO_UNIT_NAME])
+    say("Decodo 订阅服务已 enable + 启动")
+
+
+@systemd.command("decodo-disable")
+def systemd_decodo_disable() -> None:
+    """停止并取消 Decodo 订阅服务自启。"""
+    from .utils import run
+    run(["systemctl", "--user", "disable", "--now", installer_mod.DECODO_UNIT_NAME])
+    say("Decodo 订阅服务已停止 + disable")
+
+
+@systemd.command("decodo-uninstall")
+def systemd_decodo_uninstall() -> None:
+    """删除 Decodo 订阅服务的 systemd user unit。"""
+    installer_mod.uninstall_decodo_systemd_unit()
+
+
 # ---------- tun (虚拟网卡/路由层透明代理) ----------
 
 @main.group()
@@ -609,6 +642,315 @@ def node_auto(group: str) -> None:
     cfg = _cfg(); a = api_mod.API(cfg)
     a.switch(group, "♻️自动选择")
     say(f"[{group}] → [♻️自动选择]")
+
+
+# ---------- decodo (Decodo Dedicated ISP HTTP/SOCKS5 上游) ----------
+
+@main.group()
+def decodo() -> None:
+    """Decodo ISP 上游节点管理和 Mihomo 订阅生成。"""
+
+
+@decodo.command("add")
+@click.option("--server", default=decodo_mod.DEFAULT_SERVER, show_default=True,
+              help="Decodo 连接入口,不要填代理后的出口 IP")
+@click.option("--port", type=click.IntRange(1, 65535), required=True,
+              help="Decodo Dedicated ISP 端口,例如 10001")
+@click.option("--protocol", type=click.Choice(list(decodo_mod.SUPPORTED_PROTOCOLS)),
+              default="http", show_default=True)
+@click.option("--username", required=True, help="Decodo 用户名")
+@click.option("--password", prompt="Decodo password", hide_input=True,
+              confirmation_prompt=True, help="省略时隐藏提示输入,不要放进公开 URL")
+@click.option("--name", required=True, help="Mihomo 节点名称")
+@click.option("--account-id", help="可选账号 ID;省略时按入口/协议/用户名自动复用账号")
+def decodo_add(server: str, port: int, protocol: str, username: str,
+               password: str, name: str, account_id: str | None) -> None:
+    """追加节点到当前代理组,保留现有规则分流。"""
+    cfg = cfg_mod.load()
+    try:
+        reused_account, node = decodo_mod.add_node(
+            cfg,
+            server=server,
+            port=port,
+            protocol=protocol,
+            username=username,
+            password=password,
+            name=name,
+            account_id=account_id,
+        )
+        applied = False
+        # add 的主流程就是“追加并可用”:有现有 Mihomo 配置时立即合并节点、
+        # 新组和所有已有代理组；不修改原有 rules,避免无意切成全局出口。
+        if cfg.mihomo_dir and cfg.config_path.exists():
+            sub_mod.merge_decodo(cfg, global_mode=False)
+            applied = True
+        cfg_mod.save(cfg)
+    except (OSError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    say(f"已追加 Decodo 节点: {node.name} ({node.protocol} {node.server}:{node.port})")
+    console.print(f"  账号: {reused_account}  (密码已保存到用户配置,未打印)")
+    if applied:
+        say("已追加到当前 config.yaml 的 Decodo ISP 组及其他已有代理组,原有规则保持不变")
+        if mihomo_pid():
+            try:
+                api_mod.API(cfg).reload_config(str(cfg.config_path))
+                say("运行中的 Mihomo 已热加载")
+            except Exception:
+                warn("Mihomo 热加载失败,配置已写入;稍后执行 mhctl decodo apply --reload")
+    else:
+        warn("当前还没有本地 config.yaml,节点已保存;可用 mhctl decodo export 或 mhctl decodo apply")
+
+
+@decodo.command("list")
+def decodo_list() -> None:
+    """列出 Decodo 节点和最近健康状态(不显示密码)。"""
+    cfg = cfg_mod.load(create_if_missing=False)
+    try:
+        nodes = decodo_mod.list_nodes(cfg)
+    except (OSError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    if not nodes:
+        say("还没有 Decodo 节点", ok=False)
+        return
+    health = decodo_mod.load_health(cfg)
+    table = Table(title="Decodo ISP 节点")
+    for col in ("ID", "名称", "账号", "协议", "入口", "状态", "延迟", "出口 IP"):
+        table.add_column(col)
+    for node in nodes:
+        item = health.get(node.node_id, {})
+        latency = item.get("latency")
+        table.add_row(
+            node.node_id,
+            node.name,
+            node.account_id,
+            node.protocol,
+            f"{node.server}:{node.port}",
+            str(item.get("status", "unknown")),
+            f"{latency} ms" if latency is not None else "-",
+            str(item.get("exit_ip", "") or "-"),
+        )
+    console.print(table)
+
+
+@decodo.command("remove")
+@click.argument("node_ref")
+def decodo_remove(node_ref: str) -> None:
+    """删除一个节点, NODE_REF 可为 ID、名称或唯一端口。"""
+    cfg = cfg_mod.load()
+    try:
+        node = decodo_mod.remove_node(cfg, node_ref)
+        applied = False
+        if cfg.mihomo_dir and cfg.config_path.exists():
+            if decodo_mod.list_nodes(cfg):
+                sub_mod.merge_decodo(cfg, global_mode=False)
+            else:
+                sub_mod.remove_decodo(cfg)
+            applied = True
+        health = decodo_mod.load_health(cfg)
+        if node.node_id in health:
+            health.pop(node.node_id, None)
+            decodo_mod.save_health(cfg, health)
+        cfg_mod.save(cfg)
+    except (OSError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    say(f"已删除 Decodo 节点: {node.name} ({node.server}:{node.port})")
+    if applied and mihomo_pid():
+        try:
+            api_mod.API(cfg).reload_config(str(cfg.config_path))
+            say("运行中的 Mihomo 已热加载")
+        except Exception:
+            warn("Mihomo 热加载失败,配置已写入")
+
+
+@decodo.command("set-password")
+@click.argument("account_or_node")
+@click.option("--password", prompt="New Decodo password", hide_input=True,
+              confirmation_prompt=True)
+def decodo_set_password(account_or_node: str, password: str) -> None:
+    """更新账号密码;已有订阅 token 和 URL 保持不变。"""
+    cfg = cfg_mod.load()
+    try:
+        account_id = decodo_mod.set_password(cfg, account_or_node, password)
+        applied = False
+        if cfg.mihomo_dir and cfg.config_path.exists():
+            sub_mod.merge_decodo(cfg, global_mode=False)
+            applied = True
+        cfg_mod.save(cfg)
+    except (OSError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    say(f"已更新账号密码: {account_id} (密码未打印,订阅 URL 不变)")
+    if applied and mihomo_pid():
+        try:
+            api_mod.API(cfg).reload_config(str(cfg.config_path))
+            say("运行中的 Mihomo 已热加载新密码")
+        except Exception:
+            warn("Mihomo 热加载失败,配置已写入;稍后执行 mhctl decodo apply --reload")
+
+
+@decodo.command("export")
+@click.option("-o", "output", type=click.Path(dir_okay=False),
+              help="写入 YAML 文件;省略时输出到 stdout")
+@click.option("--no-rules", is_flag=True,
+              help="只输出节点/代理组,不添加末尾 MATCH,适合作为配置片段")
+def decodo_export(output: str | None, no_rules: bool) -> None:
+    """生成可被 Mihomo/Clash Meta 加载的 Decodo YAML。"""
+    cfg = cfg_mod.load(create_if_missing=False)
+    try:
+        content = decodo_mod.render_yaml(cfg, include_rules=not no_rules)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    if output:
+        path = Path(output)
+        sub_mod.install(content, path)
+        say(f"已生成 Decodo 订阅: {path} (密码未打印,文件权限已收紧)")
+    else:
+        click.echo(content.decode("utf-8"), nl=False)
+
+
+@decodo.command("apply")
+@click.option("--reload", "do_reload", is_flag=True,
+              help="写入后让运行中的 Mihomo 热加载")
+@click.option("--global", "global_mode", is_flag=True,
+              help="把最后一条 MATCH 规则指向 Decodo ISP,使本机规则模式全局走 Decodo")
+def decodo_apply(do_reload: bool, global_mode: bool) -> None:
+    """把 Decodo 节点合并到当前 Mihomo config.yaml,保留原有节点。"""
+    cfg = _cfg()
+    try:
+        path = sub_mod.merge_decodo(cfg, global_mode=global_mode)
+    except (OSError, ValueError, yaml.YAMLError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    say(f"Decodo 节点已合并到 {path}")
+    if do_reload:
+        if not mihomo_pid():
+            warn("--reload 需要 mihomo 在运行,已跳过")
+        else:
+            try:
+                api_mod.API(cfg).reload_config(str(path))
+                say("已热加载")
+            except Exception as exc:
+                raise click.ClickException(f"热加载失败: {type(exc).__name__}") from exc
+
+
+@decodo.command("check")
+@click.argument("node_ref", required=False)
+def decodo_check(node_ref: str | None) -> None:
+    """通过每个上游查询公网 IP,逐节点保存健康状态。"""
+    cfg = cfg_mod.load(create_if_missing=False)
+    try:
+        results = decodo_mod.check_nodes(cfg, node_ref)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    table = Table(title="Decodo 健康检查")
+    table.add_column("节点")
+    table.add_column("状态")
+    table.add_column("延迟")
+    table.add_column("出口 IP")
+    table.add_column("位置 / ISP")
+    for node in decodo_mod.list_nodes(cfg):
+        if node.node_id not in results:
+            continue
+        item = results[node.node_id]
+        location = ", ".join(
+            str(item.get(key, "")) for key in ("city", "region", "country") if item.get(key)
+        )
+        if item.get("isp"):
+            location = f"{location} / {item['isp']}" if location else str(item["isp"])
+        table.add_row(
+            node.name,
+            str(item.get("status", "offline")),
+            f"{item['latency']} ms" if item.get("latency") is not None else "-",
+            str(item.get("exit_ip", "") or "-"),
+            location or str(item.get("error", "-")),
+        )
+    console.print(table)
+
+
+@decodo.command("config")
+@click.option("--public-base-url", default=None,
+              help="公网反向代理前缀,例如 https://example.com")
+@click.option("--listen-host", default=None, help="订阅服务监听地址")
+@click.option("--listen-port", type=click.IntRange(1, 65535), default=None,
+              help="订阅服务监听端口")
+def decodo_config(public_base_url: str | None, listen_host: str | None,
+                  listen_port: int | None) -> None:
+    """配置 Decodo 订阅服务地址;不会显示账号密码。"""
+    cfg = cfg_mod.load()
+    changed = False
+    if public_base_url is not None:
+        cfg.decodo_public_base_url = public_base_url.strip().rstrip("/")
+        changed = True
+    if listen_host is not None:
+        cfg.decodo_listen_host = listen_host
+        changed = True
+    if listen_port is not None:
+        cfg.decodo_listen_port = listen_port
+        changed = True
+    if changed:
+        cfg_mod.save(cfg)
+        say("Decodo 订阅服务配置已保存")
+    console.print(f"  public_base_url = {cfg.decodo_public_base_url or '(未设置)'}")
+    console.print(f"  listen         = {cfg.decodo_listen_host}:{cfg.decodo_listen_port}")
+
+
+@decodo.group("token")
+def decodo_token() -> None:
+    """创建/撤销订阅 token;配置文件只保存 token 哈希。"""
+
+
+@decodo_token.command("create")
+@click.option("--label", default="default", show_default=True)
+@click.option("--base-url", default=None,
+              help="同时保存公网前缀,例如 https://example.com")
+def decodo_token_create(label: str, base_url: str | None) -> None:
+    """创建 token 并打印一次完整订阅 URL。"""
+    cfg = cfg_mod.load()
+    if base_url is not None:
+        cfg.decodo_public_base_url = base_url.strip().rstrip("/")
+    token = decodo_mod.create_subscription_token(cfg, label)
+    cfg_mod.save(cfg)
+    click.echo(decodo_mod.subscription_url(cfg, token))
+
+
+@decodo_token.command("list")
+def decodo_token_list() -> None:
+    """列出 token 元数据,不显示 bearer token。"""
+    cfg = cfg_mod.load(create_if_missing=False)
+    rows = decodo_mod.token_summaries(cfg)
+    if not rows:
+        say("还没有订阅 token", ok=False)
+        return
+    table = Table(title="Decodo 订阅 token")
+    table.add_column("ID")
+    table.add_column("创建时间")
+    for row in rows:
+        table.add_row(row["id"], row["created_at"])
+    console.print(table)
+
+
+@decodo_token.command("revoke")
+@click.argument("label")
+def decodo_token_revoke(label: str) -> None:
+    """撤销一个 token。"""
+    cfg = cfg_mod.load()
+    try:
+        decodo_mod.revoke_token(cfg, label)
+        cfg_mod.save(cfg)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    say(f"已撤销订阅 token: {label}")
+
+
+@decodo.command("serve")
+@click.option("--host", default=None, help="覆盖配置中的监听地址")
+@click.option("--port", type=click.IntRange(1, 65535), default=None,
+              help="覆盖配置中的监听端口")
+def decodo_serve(host: str | None, port: int | None) -> None:
+    """启动 token 保护的 /sub/<token> YAML 服务(建议放在 HTTPS 反代后)。"""
+    cfg = cfg_mod.load(create_if_missing=False)
+    subscription_server_mod.serve(
+        host or cfg.decodo_listen_host,
+        port or cfg.decodo_listen_port,
+    )
 
 
 # ---------- limit ----------
